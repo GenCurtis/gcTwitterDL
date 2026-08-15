@@ -44,7 +44,9 @@ elif 不包含:
 下载不计入次数 
 ```
 
-# Change Log 
+<details>
+<summary><b>Change Log</b> (点击展开/收起)</summary>
+
 * **2026-08-15 (自用 fork)** 
   * 全面重构为 `tw_dl/` 公共包架构(配置/日志/API客户端/下载器/CSV/MD/缓存收口),修复多个下载 bug 
   * 新增 `sync_down.py` 增量拉取:最新媒体推文 ID 侦测,不遍历式全量拉取 
@@ -100,6 +102,8 @@ elif 不包含:
 * **2023-09-15**
   * 添加 视频下载 功能
  
+</details>
+
 ---
 
 <div align="center"> 
@@ -236,6 +240,9 @@ _filter = ""
 实例参考：https://github.com/caolvchong-top/twitter_download/issues/63#issuecomment-2351039320 & https://github.com/caolvchong-top/twitter_download/issues/106
 
 
+<details>
+<summary><b>效果预览</b> (点击展开/收起)</summary>
+
 效果预览
 ---
 ![20230720134231](https://github.com/caolvchong-top/twitter_download/assets/57820488/ee6a1c13-2b0c-47e9-a260-1ac529bec678) 
@@ -276,6 +283,8 @@ _filter = ""
 **生成CSV统计**
 
 ![屏幕截图 2023-10-12 223755](https://github.com/caolvchong-top/twitter_download/assets/57820488/b5dfc741-e10f-409a-b298-d56ea236bc5f)
+
+</details>
 
 
 
