@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+logs/
+cache_data.log
+settings.json
+downloads/
+settings.json.bak
+users.json
+AGENTS.md
+docs/

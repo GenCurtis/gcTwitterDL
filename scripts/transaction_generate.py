@@ -1,5 +1,4 @@
 import requests
-from urllib.parse import urlparse
 from x_client_transaction.utils import handle_x_migration, get_ondemand_file_url, generate_headers
 from x_client_transaction import ClientTransaction
 import bs4
@@ -19,8 +18,5 @@ def get_transaction_id():
     home_page_response = bs4.BeautifulSoup(home_page.content, 'html.parser')
     ondemand_file_url = get_ondemand_file_url(response=home_page_response)
     ondemand_file = session.get(url=ondemand_file_url)
-    ondemand_file_response = bs4.BeautifulSoup(ondemand_file.content, 'html.parser')
-    ondemand_file_response = ondemand_file
-    
-    ct = ClientTransaction(home_page_response,ondemand_file_response)
+    ct = ClientTransaction(home_page_response, ondemand_file)
     return ct

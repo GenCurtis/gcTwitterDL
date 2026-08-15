@@ -1,0 +1,6 @@
+{
+  "user_lst_info": "追踪的用户名单(@后面的字符)。users.json 不进 git(与 settings.json 同属本地配置),改动后请勿提交。user_lst 支持三种写法:逗号分隔、换行分隔(JSON 中写 \\n)、JSON 数组。settings.json 中的 user_lst 仅作迁移兜底,优先使用本文件",
+  "user_lst": [],
+  "alias_info": "小号/换号别名组:组名 -> [成员 screen_name 数组]。仅用于展示与提示(封号时提示同组替代账号),不合并下载数据,防误合并。由 scripts/alias_discover.py 建议候选 + 人工确认后填入",
+  "alias": {}
+}

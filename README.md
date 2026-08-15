@@ -2,6 +2,7 @@
 推特 图片 & 视频 & 文本 下载，以用户名为参数，爬取该用户推文中的图片与视频(含gif)
 
 支持排除转推内容 & 多用户爬取 & 时间范围限制 & 按Tag获取 & 纯文本获取 & 高级搜索 & 评论区下载
+& 增量拉取 & 封号自动归档(自用 fork 新增)
 
 --- 
 ## Disclaimer / 免责声明
@@ -44,6 +45,14 @@ elif 不包含:
 ```
 
 # Change Log 
+* **2026-08-15 (自用 fork)** 
+  * 全面重构为 `tw_dl/` 公共包架构(配置/日志/API客户端/下载器/CSV/MD/缓存收口),修复多个下载 bug 
+  * 新增 `sync_down.py` 增量拉取:最新媒体推文 ID 侦测,不遍历式全量拉取 
+  * 封号自动侦测与归档:重命名「【已封号】用户名」并清理下载日志 
+  * 目录整理:独立入口脚本归档到 `scripts/` 
+  * `settings.json` 支持 Windows 反斜杠路径、`user_lst` 支持数组/换行 
+  * 后续改动以 git 提交历史为准(本文件 Change Log 只保留上游记录)
+
 * **2025-08-09** 
   * 支持获取用户主页内容(头像&banner&简介)--**请直接配置profile_down.py文件并运行**
 
@@ -106,30 +115,90 @@ elif 不包含:
 
 **Linux** : 
 ``` 
-git clone https://github.com/caolvchong-top/twitter_download.git 
-cd twitter_download 
+git clone https://github.com/GenCurtis/gcTwitterDL.git 
+cd gcTwitterDL 
 pip3 install -r requirements.txt
 
 #Python版本须>=3.8  httpx==0.28.1
 ``` 
 **运行** : 
 ``` 
-配置settings.json文件
-python3 main.py 
+从 settings.template.json / users.template.json 复制出 settings.json / users.json 再配置
+(settings.json 含真实 cookie、users.json 为用户名单,均不入库;模板内只有占位符)
+python main.py              # 下载 settings.json 中的用户(增量/全量由 autoSync 决定)
+python sync_down.py         # 增量拉取:只拉有变化的用户(见下) — 自用 fork 新增
 ``` 
-**Windows** 和上面的一样，配置完setting.json后运行main.py即可 
+**Windows** 和上面的一样，配置完settings.json后运行main.py即可
+
+其他入口脚本在 `scripts/` 下,运行方式不变:
+
+``` 
+python scripts/tag_down.py
+python scripts/reply_down.py
+python scripts/text_down.py
+python scripts/profile_down.py
+```
+
+> 本仓库是 upstream `caolvchong-top/twitter_download` 的自用 fork,独立维护发布。
+
+仓库结构
+---
+```
+main.py            主入口:按 settings.json 下载指定用户的媒体(含转推/亮点/点赞标签)
+sync_down.py       增量拉取:仅对变化用户拉新内容(状态文件驱动);封号自动归档;
+                   命令行 add/remove/list/alias 管理用户名单与别名组
+scripts/           tag_down(按标签/高级搜索) / reply_down(评论) / text_down(纯文本CSV)
+                   / profile_down(头像/横幅/简介) / transaction_generate(事务ID生成)
+tw_dl/             公共包:api(请求/重试/限流) / downloader(并发下载/内容去重)
+                   / config(settings 解析) / csv_writer / md_writer / cache(下载日志)
+                   / archive(封号归档) / dedup(md5 全局去重) / utils / logger
+tests/             pytest 纯逻辑测试(无网络):python -m pytest tests
+settings.template.json / users.template.json   配置模板(复制为真实配置后填写,均不入库)
+```
+
+> 备注:上游合并/审计等内部维护记录为本地私有文档(AGENTS.md 等),不随仓库发布。
+
+增量拉取(sync_down.py)
+---
+自用 fork 新增:**不遍历式全量拉取**。每次运行对列表内每个用户只做 1 次轻量 API 调用
+(`UserMedia` 第一页,借助缓存在状态文件里的 rest_id),取**最新媒体推文 ID**
+(snowflake,随时间单调递增),与 `downloads/_sync_state.json` 记录的上次值对比:
+
+- 相同 → 无新内容,跳过(不消耗多余配额)
+- 不同 → 进入 main.py 的增量流程(autoSync 基于本地文件设定起点,只拉新内容)
+- 被封号(`UserUnavailable`/`Tombstone`)→ 自动把 `downloads/{用户名}` 归档重命名为
+  `【已封号】{用户名}`,并清理目录内的 csv / cache_data.log 下载日志(媒体文件与 md 保留)
+- 拉取中断(配额耗尽等)→ 状态不更新,下次自动重试
+
+ID 对比比"推文数量"可靠:用户删一条发一条时数量不变但 ID 必然变大(仍能侦测到);
+删帖只会让 ID 回退,与上次相同或更小都判定为「无新内容」,绝不丢内容。
+
+定时运行(每半天,Windows 计划任务):
+``` 
+schtasks /create /tn TwitterSync /tr "python C:\your_path\gcTwitterDL\sync_down.py" /sc HOURLY /mo 12
+```
+
+配置格式说明(settings.json)
+---
+- `save_path`:支持 Windows 常规路径(反斜杠),如 `C:\your_path\gcTwitterDL\downloads`;
+  留空时默认使用 `<仓库根>/downloads`。JSON 中反斜杠需写成 `\\`,若手抄成单个 `\` 导致 JSON
+  解析失败,程序会自动容错修复(将裸反斜杠替换为正斜杠)。
+- `user_lst`:三种写法均可 — 逗号分隔 `"a,b,c"` / 换行分隔(JSON 中写 `\n`)/ JSON 数组
+  `["a", "b", "c"]`。成百上千用户时建议用数组,便于排版。
 
 
 注意事项
 ---
 
-**按Tag下载&高级搜索 --> tag_down.py** 
+**按Tag下载&高级搜索 --> scripts/tag_down.py** 
 
-**下载评论区 --> reply_down.py** 
+**下载评论区 --> scripts/reply_down.py** 
 
-**指定用户纯文本推文获取 --> text_down.py** 
+**指定用户纯文本推文获取 --> scripts/text_down.py** 
 
 **指定用户媒体文件获取&转推&亮点&喜欢(只能本人账号)等 --> main.py + settings.json** 
+
+**增量拉取/封号自动归档 --> sync_down.py** 
 
 其余各种不能解决的需求建议试试tag_down的高级搜索, 或是提交Issue 
 

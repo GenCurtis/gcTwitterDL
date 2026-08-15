@@ -10,5 +10,6 @@ class User_info():
         self.save_path = None
         self.cursor = None       #下一页
         self.count = 0           #已获取计数,用于计算进度
+        self.last_error = None   #最近一次失败原因:'rate_limit'/'auth'/'structure'/'error';None=未失败(供 sync_down 区分 break/continue)
         
         pass

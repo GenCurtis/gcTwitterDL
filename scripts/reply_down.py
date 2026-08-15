@@ -1,17 +1,17 @@
-import httpx
-
 import asyncio
 import re
 import os
-import csv
-import time
+import sys
 import json
 from datetime import datetime
 from urllib.parse import quote
-from url_utils import quote_url
-from tag_down import get_heighest_video_quality
-from tag_down import hash_save_token
-from tag_down import stamp2time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 根目录,以导入 tw_dl/
+
+from tw_dl.utils import del_special_char, stamp2time, get_highest_video_quality, hash_save_token, get_tweet_msecs
+from tw_dl.api import TwitterAPI, RateLimitError, AuthError, TwitterAPIError
+from tw_dl.csv_writer import CsvWriter
+from tw_dl.downloader import download_many
 from transaction_generate import get_transaction_id
 from transaction_generate import get_url_path
 
@@ -40,63 +40,6 @@ media_down = True
 # 开启后将同时下载评论内容中的媒体文件.
 
 # ------------------------ #
-
-def del_special_char(string):
-    string = re.sub(r'[^#\u4e00-\u9fa5\u0030-\u0039\u0041-\u005a\u0061-\u007a\u3040-\u31FF\.]', '', string)
-    return string
-
-class csv_gen():
-    def __init__(self, save_path:str) -> None:
-        self.f = open(f'{save_path}{datetime.now().strftime("%Y-%m-%d %H-%M-%S")}-Reply.csv', 'w', encoding='utf-8-sig', newline='')
-        self.writer = csv.writer(self.f)
-
-        #初始化
-        self.writer.writerow(['Run Time : ' + datetime.now().strftime('%Y-%m-%d %H-%M-%S')])
-
-        main_par = ['Parent Tweet URL', 'Replier Display Name', 'Replier User Name', 'Reply Date', 'Reply Content', 'Reply URL', 
-                    'Reply Favorite Count', 'Reply Retweet Count', 'Reply Reply Count']
-
-        self.writer.writerow(main_par)
-
-    def csv_close(self):
-        self.f.close()
-
-    def stamp2time(self, msecs_stamp:int) -> str:
-        timeArray = time.localtime(msecs_stamp/1000)
-        otherStyleTime = time.strftime("%Y-%m-%d %H:%M", timeArray)
-        return otherStyleTime
-    
-    def data_input(self, main_par_info:list) -> None:   #数据格式参见 main_par
-        main_par_info[3] = self.stamp2time(main_par_info[3])    #传进来的是 int 时间戳, 故转换一下
-        self.writer.writerow(main_par_info)
-
-def download_control(media_lst):
-    async def _main():
-        async def down_save(url, _file_name, is_image):
-            if is_image:
-                url += '?format=png&name=4096x4096'
-
-            count = 0
-            while True:  #下载失败重试次数
-                try:
-                    async with semaphore:
-                        async with httpx.AsyncClient() as client:
-                            response = await client.get(quote_url(url), timeout=(3.05, 16))        #如果出现第五次或以上的下载失败,且确认不是网络问题,可以适当降低最大并发数量
-                    with open(_file_name,'wb') as f:
-                        f.write(response.content)
-                    break
-                except Exception as e:
-                    if count >= 50:
-                        print(f'{url}=====>第{count}次下载失败,已跳过')
-                        break
-                    count += 1
-                    print(e)
-                    print(f'{url}=====>第{count}次下载失败,正在重试')
-
-        semaphore = asyncio.Semaphore(max_concurrent_requests)
-        await asyncio.gather(*[asyncio.create_task(down_save(url[0], url[1], url[2])) for url in media_lst])   # 0:url 1:_file_name 2:is_image
-
-    asyncio.run(_main())
 
 
 ##########高级配置区域##########
@@ -128,54 +71,68 @@ class Reply_down():
         self.target = _target
         self.folder_path = os.getcwd() + os.sep
 
-        self._headers = {
-            'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-            'authorization':'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-        }
-        self._headers['cookie'] = cookie
-        re_token = 'ct0=(.*?);'
-        self._headers['x-csrf-token'] = re.findall(re_token, cookie)[0]
+        self.api = None
+        self.csv = None
 
-        self.cursor = ''
+        try:
+            self.api = TwitterAPI(cookie)
 
-        self.ct = get_transaction_id()
+            self.cursor = ''
 
-        if self.get_querystring():  #指定用户
-            self.folder_path = os.getcwd() + os.sep + del_special_char(self.user_name) + os.sep
-            if not os.path.exists(self.folder_path):   #创建文件夹
-                os.makedirs(self.folder_path)
-            self.csv = csv_gen(self.folder_path)
-            self.get_result()
+            self.ct = get_transaction_id()
 
-        else:   #指定推文
-            self.folder_path = os.getcwd() + os.sep + del_special_char(self.tweet_id) + os.sep
-            if not os.path.exists(self.folder_path):   #创建文件夹
-                os.makedirs(self.folder_path)
-            self.csv = csv_gen(self.folder_path)
-            self.id2reply(self.tweet_id)
+            if self.get_querystring():  #指定用户
+                self.folder_path = os.getcwd() + os.sep + del_special_char(self.user_name) + os.sep
+                if not os.path.exists(self.folder_path):   #创建文件夹
+                    os.makedirs(self.folder_path)
+                self.csv = CsvWriter(
+                    self.folder_path,
+                    f'{datetime.now().strftime("%Y-%m-%d %H-%M-%S")}-Reply.csv',
+                    [['Run Time : ' + datetime.now().strftime('%Y-%m-%d %H-%M-%S')]],
+                    ['Parent Tweet URL', 'Replier Display Name', 'Replier User Name', 'Reply Date', 'Reply Content', 'Reply URL',
+                     'Reply Favorite Count', 'Reply Retweet Count', 'Reply Reply Count'],
+                    stamp_index=3,
+                )
+                self.get_result()
 
-        self.csv.csv_close()
+            else:   #指定推文
+                self.folder_path = os.getcwd() + os.sep + del_special_char(self.tweet_id) + os.sep
+                if not os.path.exists(self.folder_path):   #创建文件夹
+                    os.makedirs(self.folder_path)
+                self.csv = CsvWriter(
+                    self.folder_path,
+                    f'{datetime.now().strftime("%Y-%m-%d %H-%M-%S")}-Reply.csv',
+                    [['Run Time : ' + datetime.now().strftime('%Y-%m-%d %H-%M-%S')]],
+                    ['Parent Tweet URL', 'Replier Display Name', 'Replier User Name', 'Reply Date', 'Reply Content', 'Reply URL',
+                     'Reply Favorite Count', 'Reply Retweet Count', 'Reply Reply Count'],
+                    stamp_index=3,
+                )
+                self.id2reply(self.tweet_id, self.user_name)
+        finally:
+            if self.csv:
+                self.csv.close()
+            if self.api:
+                self.api.close()
 
-    def id2reply(self, tweet_id:str):
+    def id2reply(self, tweet_id: str, parent_user: str):
         _cursor = ''
-        media_lst = []
         is_completed = False
         while not is_completed:
+            media_lst = []  # 每页收集一次媒体,整页统一下载(原实现不重置导致重复下载)
             url = 'https://x.com/i/api/graphql/_8aYOgEDz35BrBcBal1-_w/TweetDetail?variables={"focalTweetId":"' + tweet_id + '","cursor":"' + _cursor + '","referrer":"tweet","with_rux_injections":false,"rankingMode":"Relevance","includePromotedContent":false,"withCommunity":true,"withQuickPromoteEligibilityTweetFields":true,"withBirdwatchNotes":true,"withVoice":true}&features={"rweb_video_screen_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"rweb_tipjar_consumption_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"responsive_web_jetfuel_frame":false,"responsive_web_grok_share_attachment_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_analysis_button_from_backend":false,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_enhance_cards_enabled":false}&fieldToggles={"withArticleRichContentState":true,"withArticlePlainText":false,"withGrokAnalyze":false,"withDisallowedReplyControls":false}'
             _path = get_url_path(url)
-            url = quote_url(url)
-            self._headers['x-client-transaction-id'] = self.ct.generate_transaction_id(method='GET', path=_path)
-            response = httpx.get(url, headers=self._headers).text
+            url = url.replace('{', '%7B').replace('}', '%7D')
+            self.api.headers['x-client-transaction-id'] = self.ct.generate_transaction_id(method='GET', path=_path)
             try:
-                raw_data = json.loads(response)
-            except Exception:
-                if 'Rate limit exceeded' in response:
-                    print('API次数已超限')
-                else:
-                    print('获取数据失败')
-                print(response)
+                raw_data = self.api.get_json(url)
+            except RateLimitError:
+                print('API次数已超限')
                 return
-            
+            except (AuthError, TwitterAPIError) as e:
+                print('获取数据失败')
+                print(e)
+                return
+
             raw_data_backup = raw_data
             if not _cursor: #第一页第一条默认为父推文
                 raw_data = raw_data['data']['threaded_conversation_with_injections_v2']['instructions'][1]['entries']
@@ -202,14 +159,11 @@ class Reply_down():
                         if 'tweet' in _reply and 'edit_control' not in _reply:
                             _reply = _reply['tweet']
 
-                        if 'editable_until_msecs' in _reply['edit_control']:
-                            time_stamp = int(_reply['edit_control']['editable_until_msecs']) - 3600000
-                        elif 'edit_control_initial' in _reply['edit_control'] and 'editable_until_msecs' in _reply['edit_control']['edit_control_initial']:
-                            time_stamp = int(_reply['edit_control']['edit_control_initial']['editable_until_msecs']) - 3600000
-                        else:
+                        time_stamp = get_tweet_msecs(_reply)
+                        if time_stamp is None:
                             continue
 
-                        parent_tweet_url = f'https://x.com/{self.user_name}/status/{tweet_id}'
+                        parent_tweet_url = f'https://x.com/{parent_user}/status/{tweet_id}'
                         replier_display_name = _reply['core']['user_results']['result']['legacy']['name']
                         replier_user_name = '@' + _reply['core']['user_results']['result']['legacy']['screen_name']
                         reply_date = time_stamp
@@ -230,29 +184,30 @@ class Reply_down():
                         raw_media_lst = _reply['legacy']['extended_entities']['media']
                         for _media in raw_media_lst:
                             if 'video_info' in _media:
-                                media_url = get_heighest_video_quality(_media['video_info']['variants'])
+                                media_url = get_highest_video_quality(_media['video_info']['variants'])
                                 is_image = False
                                 _file_name = f'{self.folder_path}{stamp2time(time_stamp)}_{replier_user_name}_{hash_save_token(media_url)}_reply.mp4'
                             else:
                                 media_url = _media['media_url_https']
                                 is_image = True
                                 _file_name = f'{self.folder_path}{stamp2time(time_stamp)}_{replier_user_name}_{hash_save_token(media_url)}_reply.png'
-
+                            if is_image:
+                                media_url += '?format=png&name=4096x4096'
                             media_lst.append([media_url, _file_name, is_image])
                     except Exception as e:
                         print(e)
 
                 _csv_info = [parent_tweet_url, replier_display_name, replier_user_name, reply_date, reply_content, reply_url, reply_favorite_count, reply_retweet_count, reply_reply_count]
-                self.csv.data_input(_csv_info)
+                self.csv.write(_csv_info)
 
-                if media_lst:
-                    download_control(media_lst)
-                    
-
+            if media_lst:   #整页媒体统一下载
+                jobs = [(m[0], m[1], False, None) for m in media_lst]
+                asyncio.run(download_many(self.api, jobs, max_concurrent_requests))
 
     def get_querystring(self):
         if search_advanced:
             self.querystring = search_advanced
+            self.user_name = ''
         else:
             if '/status/' in self.target: #指定推文
                 self.tweet_id = self.target.split('/status/')[-1]
@@ -268,30 +223,30 @@ class Reply_down():
             return True
 
     def get_result(self):
-        _headers = self._headers
+        _headers = self.api.headers
         _headers['referer'] = f'https://twitter.com/search?q={quote(self.querystring)}&src=typed_query&f=media'
 
         def get_tweet_list(url, _headers):
+            #返回 [(tweet_id, 作者screen_name)] 列表,便于构造正确的父推文 URL
             tweet_lst = []
 
             _path = get_url_path(url)
-            url = quote_url(url)
-            self._headers['x-client-transaction-id'] = self.ct.generate_transaction_id(method='GET', path=_path)
-            response = httpx.get(url, headers=_headers).text
+            url = url.replace('{', '%7B').replace('}', '%7D')
+            self.api.headers['x-client-transaction-id'] = self.ct.generate_transaction_id(method='GET', path=_path)
             try:
-                raw_data = json.loads(response)
-            except Exception:
-                if 'Rate limit exceeded' in response:
-                    print('API次数已超限')
-                else:
-                    print('获取数据失败')
-                print(response)
-                return
-            
+                raw_data = self.api.get_json(url)
+            except RateLimitError:
+                print('API次数已超限')
+                return None
+            except (AuthError, TwitterAPIError) as e:
+                print('获取数据失败')
+                print(e)
+                return None
+
             if not self.cursor: #第一次
                 raw_data = raw_data['data']['search_by_raw_query']['search_timeline']['timeline']['instructions'][-1]['entries']
                 if len(raw_data) == 2:
-                    return
+                    return None
                 self.cursor = raw_data[-1]['content']['value']
                 raw_data_lst = raw_data[:-2]
             else:
@@ -300,24 +255,29 @@ class Reply_down():
                 if 'entries' in raw_data[0]:
                     raw_data_lst = raw_data[0]['entries']
                 else:
-                    return
-                
+                    return None
+
             for tweet in raw_data_lst:
-                if 'tweet-' in tweet['entryId']:
-                    tweet_id = tweet['entryId'].split('tweet-')[-1]
-                    tweet_lst.append(tweet_id)
+                try:
+                    if 'tweet-' in tweet['entryId']:
+                        tweet_id = tweet['entryId'].split('tweet-')[-1]
+                        screen_name = tweet['content']['itemContent']['tweet_results']['result']['core']['user_results']['result']['legacy']['screen_name']
+                        tweet_lst.append((tweet_id, screen_name))
+                except Exception:
+                    continue
             return tweet_lst
-                
+
         while True:
             url = 'https://x.com/i/api/graphql/yiE17ccAAu3qwM34bPYZkQ/SearchTimeline?variables={"rawQuery":"' + quote(self.querystring) + '","count":"20","cursor":"' + self.cursor + '","querySource":"typed_query","product":"Latest"}&features={"rweb_video_screen_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"rweb_tipjar_consumption_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"responsive_web_jetfuel_frame":false,"responsive_web_grok_share_attachment_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_analysis_button_from_backend":false,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_enhance_cards_enabled":false}'
-            url = quote_url(url)
             tweet_lst = get_tweet_list(url, _headers)
             if not tweet_lst:
                 break
-            for tweet_id in tweet_lst:
-                self.id2reply(tweet_id)
+            for tweet_id, screen_name in tweet_lst:
+                self.id2reply(tweet_id, screen_name)
 
-for _target in target_user:
-    print(f'开始处理: {_target}')
-    Reply_down(_target)
-    print(f'处理完成: {_target}')
+
+if __name__ == '__main__':
+    for _target in target_user:
+        print(f'开始处理: {_target}')
+        Reply_down(_target)
+        print(f'处理完成: {_target}')
