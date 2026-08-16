@@ -362,3 +362,43 @@ def test_autosync_start_stamp_fallback_without_media(tmp_path):
     (tmp_path / 'u1-2026-08-16_21-00-07.csv').write_text('a')
     assert M._autosync_start_stamp(str(tmp_path), M.backup_stamp) == M.backup_stamp
     assert M._autosync_start_stamp(str(tmp_path / 'missing'), M.backup_stamp) == M.backup_stamp
+
+
+def _tweet_ts(tid, msecs):
+    item = _tweet_item(tid)
+    item['item']['itemContent']['tweet_results']['result']['edit_control']['editable_until_msecs'] = str(msecs + 3600000)
+    return item
+
+
+def _page_ts(tid, msecs, cursor):
+    return {'data': {'user': {'result': {'timeline_v2': {'timeline': {'instructions': [
+        {'type': 'TimelineAddEntries', 'entries': [
+            {'entryId': f'tweet-{tid}', 'content': {'items': [_tweet_ts(tid, msecs)]}},
+            {'entryId': 'cursor-bottom-1', 'content': {'value': cursor}},
+        ]},
+    ]}}}}}}
+
+def _pageN_ts(tid, msecs):
+    return {'data': {'user': {'result': {'timeline_v2': {'timeline': {'instructions': [
+        {'type': 'TimelineAddToModule', 'moduleItems': [_tweet_ts(tid, msecs)]},
+        {'type': 'TimelineAddEntries', 'entries': [{'entryId': 'cursor-bottom-2', 'content': {'value': 'c2'}}]},
+    ]}}}}}}
+
+
+def test_incremental_sync_only_downloads_new_media(env, monkeypatch):
+    # R11 端到端增量语义:磁盘已有媒体 → autoSync 起点 = 最新文件日期 →
+    # 只拉新推文、旧推文不重下、旧文件不被重写。
+    # 曾因文件名格式失配(-vid_ vs -vid0)起点退化为 1990 → 每次增量全量重拉(952 文件/次)
+    disk_ts = M.time2stamp('2026-08-12') + 9 * 3600000       # 磁盘已有:08-12 09:00 → 起点=08-12
+    new_ts = M.time2stamp('2026-08-16') + 17 * 3600000 + 50 * 60000  # 新推文:08-16 17:50
+    old_ts = M.time2stamp('2026-08-10') + 10 * 3600000       # 旧推文:08-10(早于起点,不得重拉)
+    old_file = f'{M.stamp2time(disk_ts)}-100-img0.jpg'
+    (env / 'u1').mkdir()
+    (env / 'u1' / old_file).write_bytes(b'old-content')
+    PAGE_Q.extend([_info(), _page_ts(200, new_ts, 'c1'), _pageN_ts(99, old_ts), _page_end()])
+    monkeypatch.setattr(M.config, 'autoSync', True)
+    monkeypatch.setattr(M.config, 'start_stamp', M.backup_stamp)  # 匹配失效时兜底=1990 → 全量重拉
+    assert M.main(User_info('u1')) is True
+    media = [f for f in os.listdir(env / 'u1') if '-img' in f or '-vid' in f]
+    assert sorted(media) == sorted([old_file, f'{M.stamp2time(new_ts)}-200-img0.jpg'])
+    assert (env / 'u1' / old_file).read_bytes() == b'old-content'  # 未被覆盖
