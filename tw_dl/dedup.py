@@ -79,8 +79,10 @@ class DedupIndex:
             return 'keep'
         oldest = min([base] + [m['file'] for m in related])
         if base == oldest:
-            # 本次下载的最早:删除库内较晚副本,保留新文件
-            for m in related:
+            # 本次下载的最早:删除库内较晚副本,保留新文件;
+            # 同名同路径(重拉已下载内容)就是自己,无需删除也无日志
+            dups = [m for m in related if not (m['file'] == base and m['user'] == self.user)]
+            for m in dups:
                 try:
                     os.remove(os.path.join(self.root, m['user'], m['file']))
                     logger.info(f'去重: 删除较晚副本 {m["user"]}/{m["file"]},保留最早版本 {self.user}/{base}')

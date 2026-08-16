@@ -341,3 +341,24 @@ def test_corrupt_cache_falls_back(env, monkeypatch):
     monkeypatch.setattr(M, 'TwitterAPI', CorruptAPI)
     assert M.main(User_info('u1')) is True
     assert CorruptAPI.usn_calls == 1
+
+
+def test_autosync_start_stamp_new_filename_format(tmp_path):
+    # R10 回归:新文件名(-vid0/-img0)下 autoSync 起点 = 最新媒体文件日期,而非 1990 兜底全量重拉
+    (tmp_path / '2026-08-14 15-28-2088165769360376106-vid0.mp4').write_bytes(b'x')
+    (tmp_path / '2026-08-16 17-50-2088926441757118802-vid0.mp4').write_bytes(b'y')
+    (tmp_path / '2026-08-16 21-00-07.csv').write_text('a')
+    assert M._autosync_start_stamp(str(tmp_path), M.backup_stamp) == M.time2stamp('2026-08-16')
+
+
+def test_autosync_start_stamp_old_format_compat(tmp_path):
+    # 旧上游格式(-img_0.jpg)仍兼容
+    (tmp_path / '2026-08-14 15-28-2088165769360376106-img_0.jpg').write_bytes(b'x')
+    assert M._autosync_start_stamp(str(tmp_path), M.backup_stamp) == M.time2stamp('2026-08-14')
+
+
+def test_autosync_start_stamp_fallback_without_media(tmp_path):
+    # 目录为空/无媒体文件 → 兜底(全量语义不变)
+    (tmp_path / 'u1-2026-08-16_21-00-07.csv').write_text('a')
+    assert M._autosync_start_stamp(str(tmp_path), M.backup_stamp) == M.backup_stamp
+    assert M._autosync_start_stamp(str(tmp_path / 'missing'), M.backup_stamp) == M.backup_stamp

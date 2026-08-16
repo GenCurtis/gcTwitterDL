@@ -337,6 +337,22 @@ def download_control(_user_info, api, csv_file, md_file, cache_data):
     return asyncio.run(_main())
 
 
+def _autosync_start_stamp(save_path, backup_stamp):
+    """autoSync 起点:目录中最新媒体文件名里的推文日期(天级粒度,time2stamp 仅支持到天)。
+    文件名格式 = {时间戳}-{推文ID}-img/vid{序号}.{ext}(兼容旧上游格式 -img_0/-vid_0);
+    目录不存在/无媒体文件 → 返回 backup_stamp 兜底(全量)。"""
+    try:
+        files = sorted(os.listdir(save_path))
+    except OSError:
+        return backup_stamp
+    for i in files[::-1]:
+        if '-img' in i or '-vid' in i:
+            match = re.findall(r'\d{4}-\d{2}-\d{2}', i)
+            if match:
+                return time2stamp(match[0])
+    return backup_stamp
+
+
 def main(_user_info):
     # 返回 True = 本次拉取完整完成;False = 失败/中断(配额、认证、异常),调用方(如 sync_down)可据此决定是否记状态
     # 模块级全局是「每次调用」的解析状态,必须在入口复位——sync_down 等外部调用方不会帮忙复位
@@ -375,19 +391,9 @@ def main(_user_info):
         cache_data = DownloadCache(_path) if config.down_log else None
 
         if config.autoSync:
-            files = sorted(os.listdir(_user_info.save_path))
-            if len(files) > 0:
-                re_rule = r'\d{4}-\d{2}-\d{2}'
-                config.start_stamp = backup_stamp
-                for i in files[::-1]:
-                    if "-img_" in i:
-                        config.start_stamp = time2stamp(re.findall(re_rule, i)[0])
-                        break
-                    elif "-vid_" in i:
-                        config.start_stamp = time2stamp(re.findall(re_rule, i)[0])
-                        break
-            else:
-                config.start_stamp = backup_stamp
+            # 起点 = 本地最新媒体文件日期(增量语义);曾是 -img_/-vid_ 匹配,
+            # 与新文件名(-img0/-vid0)不匹配导致退化为 1990 全量重拉 — 已修复
+            config.start_stamp = _autosync_start_stamp(_user_info.save_path, backup_stamp)
 
         ok = download_control(_user_info, api, csv_file, md_file, cache_data)
 
