@@ -134,6 +134,10 @@ python sync_down.py         # 增量拉取:只拉有变化的用户(见下) — 
 ``` 
 **Windows** 和上面的一样，配置完settings.json后运行main.py即可
 
+**交互式控制台(Windows 双击)**:双击根目录 `run_cli.bat` 进入菜单 —
+增量拉取 / 添加新用户(可选立即全量拉取) / 移除用户 / 查看名单 / 去重报告。
+等效命令:`python sync_down.py menu`。
+
 其他入口脚本在 `scripts/` 下,运行方式不变:
 
 ``` 

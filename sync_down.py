@@ -455,6 +455,81 @@ def _cmd_alias(group, members):
     print(f'别名组「{group}」: {saved}')
 
 
+def _menu_remove():
+    """交互输入用户名并移除"""
+    names = []
+    print('输入要移除的用户名(@后面的字符),每行一个,空行结束:')
+    while True:
+        try:
+            line = input().strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not line:
+            break
+        names.append(line)
+    if names:
+        _cmd_remove(names)
+
+
+def _menu_add_and_full():
+    """添加用户(复用 add 的交互输入),可选立即全量拉取"""
+    names = []
+    _cmd_add(names)
+    fresh = [n for n in names if n in config.user_list]
+    if not fresh:
+        return
+    try:
+        ans = input(f'立即对新增用户 {fresh} 执行全量拉取? (y/n,默认 n): ').strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if ans != 'y':
+        print('已加入名单,下次运行 sync 时会自动全量拉取')
+        return
+    if not config.cookie or 'ct0=' not in config.cookie:
+        print('请先在 settings.json 配置 cookie(auth_token 与 ct0)')
+        return
+    for n in fresh:
+        print(f'--- 全量拉取 {n} ---')
+        try:
+            ok = main(User_info(n))
+        except Exception as e:
+            print(f'{n}: 拉取异常: {e}')
+        else:
+            print(f'{n}: 拉取完成' if ok else f'{n}: 拉取未完成,下次 sync 将重试')
+
+
+def _cmd_menu():
+    """交互式总控制台:python sync_down.py menu(或双击根目录 run_cli.bat)"""
+    print('===== gcTwitterDL 控制台 =====')
+    while True:
+        print('''
+1) 增量拉取(全部用户,回车同效)
+2) 添加新用户(加入名单,可选立即全量拉取)
+3) 移除用户
+4) 查看名单/别名组/状态
+5) 内容去重报告
+0) 退出''')
+        try:
+            choice = input('请选择 [1-5],回车=增量拉取,0=退出: ').strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if choice in ('', '1'):
+            sync()
+        elif choice == '2':
+            _menu_add_and_full()
+        elif choice == '3':
+            _menu_remove()
+        elif choice == '4':
+            _cmd_list()
+        elif choice == '5':
+            _cmd_report()
+        elif choice in ('0', 'q', 'Q', 'exit', 'quit'):
+            break
+        else:
+            print('无效选择')
+
+
 def _main_cli():
     parser = argparse.ArgumentParser(prog='sync_down', description='增量拉取(首次全量自动分派):无子命令时直接执行同步')
     sub = parser.add_subparsers(dest='cmd')
@@ -468,10 +543,13 @@ def _main_cli():
     p_alias.add_argument('members', nargs='+')
     sub.add_parser('report', help='内容去重报告(md5 扫描,按别名组聚合;只报告不删文件)')
     sub.add_parser('sync', help='执行同步(默认,可省略)')
-    p_dedup = sub.add_parser('dedup', help='存量去重:同用户/同组完全一致内容保留最早(默认 dry-run,--apply 执行)')
+    p_dedup =     sub.add_parser('dedup', help='存量去重:同用户/同组完全一致内容保留最早(默认 dry-run,--apply 执行)')
     p_dedup.add_argument('--apply', action='store_true', help='执行删除(默认仅打印计划)')
+    sub.add_parser('menu', help='交互式总控制台(双击根目录 run_cli.bat 进入)')
     args = parser.parse_args()
-    if args.cmd == 'add':
+    if args.cmd == 'menu':
+        _cmd_menu()
+    elif args.cmd == 'add':
         _cmd_add(args.users)
     elif args.cmd == 'remove':
         _cmd_remove(args.users)
