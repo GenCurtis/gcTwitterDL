@@ -221,7 +221,7 @@ def test_quota_aborts(env, monkeypatch):
 def test_main_logs_key_events(env, monkeypatch, caplog):
     # B1:关键事件写日志(可观测性;print 保留给控制台)
     import logging
-    caplog.set_level(logging.INFO, logger='twitter_download')
+    caplog.set_level(logging.INFO, logger='gcTwitterDL')
     PAGE_Q.extend(_user_pages('u1'))
     assert M.main(User_info('u1')) is True
     messages = [r.message for r in caplog.records]
@@ -248,7 +248,7 @@ def test_partial_download_then_structural_error(env, monkeypatch):
 def test_entry_parse_failure_logged(env, monkeypatch, caplog):
     # R3:条目级解析失败留 debug 日志(不再完全静默),且不中断整页、不影响其他条目
     import logging
-    caplog.set_level(logging.DEBUG, logger='twitter_download')
+    caplog.set_level(logging.DEBUG, logger='gcTwitterDL')
 
     def bad_page():
         return {'data': {'user': {'result': {'timeline_v2': {'timeline': {'instructions': [

@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 
 
 def setup_logger():
-    logger = logging.getLogger('twitter_download')
+    logger = logging.getLogger('gcTwitterDL')
     logger.setLevel(logging.DEBUG)
 
     if logger.handlers:
@@ -21,7 +21,7 @@ def setup_logger():
     # 文件:DEBUG 全量,滚动 5MB x 5
     logs_dir = Path(__file__).resolve().parent.parent / 'logs'
     logs_dir.mkdir(parents=True, exist_ok=True)
-    file_handler = RotatingFileHandler(logs_dir / 'twitter_download.log',
+    file_handler = RotatingFileHandler(logs_dir / 'gcTwitterDL.log',
                                        maxBytes=5 * 1024 * 1024, backupCount=5, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
